@@ -1,7 +1,7 @@
 // VARIABLES & PATHS
 
 let preprocessor = 'sass', // Preprocessor (sass, scss, less, styl)
-    fileswatch   = 'html,htm,txt,json,md,woff2', // List of files extensions for watching & hard reload (comma separated)
+    fileswatch   = 'txt,json,md,woff2', // List of files extensions for watching & hard reload (comma separated)
     imageswatch  = 'jpg,jpeg,png,webp,svg', // List of images extensions for watching & compression (comma separated)
     baseDir      = 'app', // Base directory path without «/» at the end
     online       = true; // If «false» - Browsersync will work offline without internet connection
@@ -10,20 +10,29 @@ let paths = {
 
 	scripts: {
 		src: [
-			// 'node_modules/jquery/dist/jquery.min.js', // npm vendor example (npm i --save-dev jquery)
-			baseDir + '/js/app.js' // app.js. Always at the end
+			baseDir + '/assets/js/' // app.js. Always at the end
 		],
-		dest: baseDir + '/js',
+		dest: baseDir + '/js/',
 	},
 
 	styles: {
-		src:  baseDir + '/' + preprocessor + '/main.*',
-		dest: baseDir + '/css',
+		src:  baseDir + '/assets/css' + '/pages/**/*.' + preprocessor,
+		dest: baseDir + '/css/',
 	},
 
 	images: {
-		src:  baseDir + '/images/src/**/*',
-		dest: baseDir + '/images/dest',
+		src:  baseDir + '/assets/imageSrc/**/*',
+		dest: baseDir + '/img/',
+	},
+
+	fonts: {
+		dest: baseDir + '/assets/fonts/'
+	},
+
+	templates: {
+		src: baseDir + '/assets/templateSrc/*.html',
+		dest: baseDir + '/templates/',
+		components: baseDir + '/assets/templateSrc/components/*.html'
 	},
 
 	deploy: {
@@ -33,69 +42,99 @@ let paths = {
 		exclude:     [ '**/Thumbs.db', '**/*.DS_Store' ], // Excluded files from deploy
 	},
 
-	cssOutputName: 'app.min.css',
-	jsOutputName:  'scripts.js',
+	build: {
+		dest: baseDir + '/dist',
+		scriptsDest: baseDir + '/dist/js',
+		stylesDest: baseDir + '/dist/css',
+		htmlDest: baseDir + '/dist/templates',
+		imagesDest: baseDir + '/dist/img',
+		fontsDest: baseDir + '/dist/fonts'
+	},
 
 }
 
 // LOGIC
+import pkg from 'gulp'
+const { gulp, src, dest, parallel, series, watch } = pkg
 
-const { src, dest, parallel, series, watch } = require('gulp');
-const sass         = require('gulp-sass');
-// const scss         = require('gulp-sass');
-// const less         = require('gulp-less');
-// const styl         = require('gulp-stylus');
-const cleancss     = require('gulp-clean-css');
-const concat       = require('gulp-concat');
-const browserSync  = require('browser-sync').create();
-// const uglify       = require('gulp-uglify-es').default;
-const autoprefixer = require('gulp-autoprefixer');
-const imagemin     = require('gulp-imagemin');
-const newer        = require('gulp-newer');
-const rsync        = require('gulp-rsync');
-const del          = require('del');
-const webpack      = require('webpack');
-const webpackStream = require('webpack-stream');
-const webpackConfig = require('./webpack.config.js');
+import fs                     from 'fs'
+import rimraf                 from 'rimraf'
+import browserSync            from 'browser-sync'
+import gulpSass               from 'gulp-sass'
+import dartSass               from 'sass'
+const  sass                   = gulpSass(dartSass)
+import cleancss               from 'gulp-clean-css'
+import autoprefixer           from 'gulp-autoprefixer'
+import imagemin               from 'gulp-imagemin'
+import newer                  from 'gulp-newer'
+import rsync                  from 'gulp-rsync'
+import del                    from 'del'
+import webpackStream          from 'webpack-stream'
+import webpackConfig          from'./webpack.config.js'
+import rev                    from 'gulp-rev'
+import revdel                 from 'gulp-rev-delete-original'
+import rename                 from 'gulp-rename'
+import imageminJpegRecompress from 'imagemin-jpeg-recompress'
+import imageminPngquant       from 'imagemin-pngquant'
+import fileinclude            from 'gulp-file-include'
+
+
+
+// DEVELOPMENT SECTION
 
 function browsersync() {
 	browserSync.init({
 		server: { baseDir: baseDir + '/' },
 		notify: false,
-		online: online
+		online: online,
+		index: '/templates/mainPage.html'
 	})
 }
 
-// function scripts() {
-// 	return src(paths.scripts.src)
-// 	.pipe(concat(paths.jsOutputName))
-// 	.pipe(uglify())
-// 	.pipe(dest(paths.scripts.dest))
-// 	.pipe(browserSync.stream())
-// }
 
 function scripts() {
+	// webpack development mode
+	webpackConfig.mode = 'development'
+	webpackConfig.watch = true
+
 	return src(paths.scripts.src)
-	.pipe(webpackStream(webpackConfig), webpack)
-	.pipe(dest(paths.scripts.dest))
-	.pipe(browserSync.stream())
+		.pipe(webpackStream(webpackConfig))
+		.pipe(dest(paths.scripts.dest))
+		.pipe(browserSync.stream())
 }
 
 function styles() {
 	return src(paths.styles.src)
-	.pipe(eval(preprocessor)())
-	.pipe(concat(paths.cssOutputName))
-	.pipe(autoprefixer({ overrideBrowserslist: ['last 10 versions'], grid: true }))
-	.pipe(cleancss( {level: { 1: { specialComments: 0 } } }))
-	.pipe(dest(paths.styles.dest))
-	.pipe(browserSync.stream())
+		.pipe(eval(preprocessor)())
+		.pipe(rename({dirname: ''})) // remove folders
+		.pipe(dest(paths.styles.dest))
+		.pipe(browserSync.stream())
 }
 
 function images() {
 	return src(paths.images.src)
-	.pipe(newer(paths.images.dest))
-	.pipe(imagemin())
-	.pipe(dest(paths.images.dest))
+		.pipe(newer(paths.images.dest))
+		.pipe(imagemin([
+			imageminPngquant({
+				quality: [0.5, 0.8]
+			}),
+			imageminJpegRecompress({
+				progressive: true,
+				max: 80,
+				min: 70
+			}),
+		]))
+		.pipe(dest(paths.images.dest))
+}
+
+function html() {
+	return src(paths.templates.src)
+		.pipe(fileinclude({
+			prefix: '@@',
+			basepath: '@file'
+		}))
+		.pipe(dest(paths.templates.dest))
+		.pipe(browserSync.stream())
 }
 
 function cleanimg() {
@@ -118,17 +157,77 @@ function deploy() {
 }
 
 function startwatch() {
-	watch(baseDir  + '/**/' + preprocessor + '/**/*', styles);
-	watch(baseDir  + '/**/*.{' + imageswatch + '}', images);
+	watch(baseDir  + '/assets/css/**/*', styles);
+	watch(baseDir  + '/assets/imageSrc/**/*.{' + imageswatch + '}', images);
 	watch(baseDir  + '/**/*.{' + fileswatch + '}').on('change', browserSync.reload);
-	watch([baseDir + '/**/*.js', '!' + paths.scripts.dest + '/*.min.js'], scripts);
+	watch(baseDir + '/js/*.js', scripts);
+	watch(baseDir + '/assets/templateSrc/**/*.html', html);
 }
 
-exports.browsersync = browsersync;
-exports.assets      = series(cleanimg, styles, scripts, images);
-exports.styles      = styles;
-exports.scripts     = scripts;
-exports.images      = images;
-exports.cleanimg    = cleanimg;
-exports.deploy      = deploy;
-exports.default     = parallel(images, styles, scripts, browsersync, startwatch);
+
+// BUILD SECTION
+
+async function buildDist() {
+	if(!fs.existsSync(paths.build.dest)) {
+		fs.mkdirSync(paths.build.dest)
+	} else {
+		rimraf.sync(paths.build.dest) // delete folder
+		fs.mkdirSync(paths.build.dest)
+	}
+}
+
+function buildScripts() {
+	// webpack production mode
+	webpackConfig.mode = 'production'
+	webpackConfig.watch = false
+
+	return src(paths.scripts.dest)
+		.pipe(webpackStream(webpackConfig))
+		.pipe(dest(paths.build.scriptsDest))
+}
+
+function buildStyles() {
+	return src(paths.styles.dest + '/*.css')
+		.pipe(autoprefixer({ overrideBrowserslist: ['last 10 versions'], grid: true }))
+		.pipe(cleancss( {level: { 1: { specialComments: 0 } } }))
+		.pipe(dest(paths.build.stylesDest))
+}
+
+function hashFiles() {
+	return src([paths.build.scriptsDest + '/*.js', paths.build.stylesDest + '/*.css'], {base: paths.build.dest})
+		// .pipe(dest(paths.build.dest)) // copy original files to dist
+		.pipe(rev())
+		.pipe(dest(paths.build.dest)) // write rev'd files
+		.pipe(revdel())               // delete original files
+		.pipe(rev.manifest())
+		.pipe(dest(paths.build.dest))
+}
+
+function buildTemplates() {
+	return src([paths.templates.dest + '**/*.html', paths.templates.components])
+		.pipe(dest(paths.build.htmlDest))
+}
+
+function buildImages() {
+	return src(paths.images.dest + '**/*')
+		.pipe(dest(paths.build.imagesDest))
+}
+
+function buildFonts() {
+	return src(paths.fonts.dest + '*.woff2')
+		.pipe(dest(paths.build.fontsDest))
+}
+
+
+
+// TASKS SECTION
+
+// exports.browsersync = browsersync;
+// exports.assets      = series(cleanimg, styles, scripts, images);
+// exports.styles      = styles;
+// exports.scripts     = scripts;
+// exports.images      = images;
+// exports.cleanimg    = cleanimg;
+// exports.deploy      = deploy;
+export default         parallel(images, styles, scripts, html, browsersync, startwatch)
+export let build =     series(buildDist, buildScripts, buildStyles, hashFiles, buildTemplates, buildImages, buildFonts)
